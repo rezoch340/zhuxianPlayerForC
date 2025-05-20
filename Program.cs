@@ -34,40 +34,6 @@ class Program
     static async Task Main(string[] args)
     {
         //OpenBilibiliPage();
-        var versionInfo = await CheckVersion();
-        if (!versionInfo.is_enabled)
-        {
-            return;
-        }
-
-        if (versionInfo.update)
-        {
-            var localinfo = versionInfo.update_declaration.Replace("\\n", Environment.NewLine).Replace("\\", "");
-            Console.WriteLine($"更新公告: {localinfo}");
-            Console.WriteLine("下载链接: " + versionInfo.download_url);
-            Console.WriteLine("是否立即更新？(Y/N): ");
-
-            string userInput = Console.ReadLine()?.Trim().ToUpper();
-            if (userInput == "Y")
-            {
-                OpenBrowser(versionInfo.download_url);
-                Console.WriteLine("更新完成，程序退出。");
-            }
-            else
-            {
-                Console.WriteLine("用户取消更新，程序退出。");
-            }
-            return;
-        }
-
-        // 设置控制台标题和本地版本信息
-        string localPrompt = $"LocalVersion: {globalVariable["version"]} 启动次数: {versionInfo.start_count}| {versionInfo.version_information}";
-        Console.Title = localPrompt;
-
-        // 处理多行换行符并打印版本声明
-        string versionDeclaration = versionInfo.version_declaration.Replace("\\n", Environment.NewLine).Replace("\\", "");
-        Console.WriteLine($"{localPrompt}\n");
-        Console.WriteLine(versionDeclaration);
 
         // 提示程序已加载
         Console.WriteLine("自动演奏单人版本 已加载。");
@@ -146,96 +112,6 @@ class Program
         PostMessage(gameWindowHandle, msg, (IntPtr)key, IntPtr.Zero);
     }
 
-    private static async Task<dynamic> CheckVersion()
-    {
-        string apiBase = globalVariable["api_base"].ToString();
-        string appName = globalVariable["app_name"].ToString();
-        string apiKey = globalVariable.ContainsKey("api_key") ? globalVariable["api_key"].ToString() : string.Empty;
-
-        try
-        {
-            HttpClientHandler handler = new HttpClientHandler
-            {
-                ServerCertificateCustomValidationCallback = (message, cert, chain, sslPolicyErrors) => true
-            };
-            using HttpClient client = new HttpClient(handler);
-            client.DefaultRequestHeaders.Add("accept", "application/json");
-            if (!string.IsNullOrEmpty(apiKey))
-            {
-                client.DefaultRequestHeaders.Add("x_key", apiKey);
-            }
-
-            var response = await client.GetAsync($"{apiBase}/version/?appname={appName}");
-            if (response.IsSuccessStatusCode)
-            {
-                string responseData = await response.Content.ReadAsStringAsync();
-
-                var jsonResponse = JsonSerializer.Deserialize<Dictionary<string, string>>(responseData);
-                if (!jsonResponse.ContainsKey("code"))
-                {
-                    throw new Exception("Response does not contain 'code' field.");
-                }
-
-                string encryptedCode = jsonResponse["code"];
-
-                // 解密并解析为 JsonElement
-                var versionInfo = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(FromCode(encryptedCode));
-
-                // 使用 JsonElement 的方法获取值
-                bool isEnabled = versionInfo.ContainsKey("is_enabled") && versionInfo["is_enabled"].GetBoolean();
-                bool updateAvailable = versionInfo.ContainsKey("version") &&
-                       versionInfo["version"].ValueKind == JsonValueKind.Number &&
-                       versionInfo["version"].GetDouble() > Convert.ToDouble(globalVariable["version"]);
-
-                double version = versionInfo.ContainsKey("version") ? versionInfo["version"].GetDouble() : 0.0;
-                int start_count = (int)(versionInfo.ContainsKey("start_count") ? versionInfo["start_count"].GetDouble() : 0);
-                return new
-                {
-                    is_enabled = isEnabled,
-                    update = updateAvailable,
-                    version_information = versionInfo.ContainsKey("version_information") ? versionInfo["version_information"].GetString() : "无信息",
-                    update_declaration = versionInfo.ContainsKey("update_declaration") ? versionInfo["update_declaration"].GetString() : "无信息",
-                    version_declaration = versionInfo.ContainsKey("version_declaration") ? versionInfo["version_declaration"].GetString().Replace("\\n", Environment.NewLine) : "无信息",
-                    download_url = versionInfo.ContainsKey("download_url") ? versionInfo["download_url"].GetString() : string.Empty,
-                    version = version,
-                    start_count = start_count,
-                };
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("版本检查失败: " + ex.Message);
-        }
-
-        return new
-        {
-            update = false,
-            is_enabled = false,
-            version_information = "无法链接到服务器,请检查网络连接",
-            download_url = string.Empty,
-            update_declaration = "无法链接到服务器,请检查网络连接",
-            version_declaration = "无法链接到服务器,请检查网络连接",
-            version = 0.0,
-            start_count = 9999
-        };
-    }
-
-    static void OpenBilibiliPage()
-    {
-        try
-        {
-            // 设置网址
-            string url = "https://space.bilibili.com/35335853";
-
-            // 使用默认浏览器打开该网址
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"发生错误: {ex.Message}");
-        }
-    }
 
 
 
