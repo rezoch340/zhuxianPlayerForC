@@ -1,0 +1,150 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Text.Json;
+using NAudio.Midi;
+using WindowsInput;
+using WindowsInput.Native;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        Console.Title = "自动演奏单人版本 群 778228819 猪头少年免费分享 禁止二次倒卖 作者qq:2516942552 BiliBili: Tomioka-GiyuuUuu";
+        MidiHandler.Start();
+    }
+}
+
+class MidiHandler
+{
+    private static InputSimulator keyboardSimulator = new InputSimulator();
+
+    public static void Start()
+    {   
+
+        Console.WriteLine("自动演奏单人版本 群 778228819 猪头少年免费分享 禁止二次倒卖" +
+            "https://space.bilibili.com/35335853 关注主播谢谢喵 ");
+        // 列出所有可用的 MIDI 输入设备
+        Console.WriteLine("请选择一个 MIDI 输入设备:");
+
+        for (int i = 0; i < MidiIn.NumberOfDevices; i++)
+        {
+            string deviceName = MidiIn.DeviceInfo(i).ProductName;
+            Console.WriteLine($"{i}: {deviceName}");
+        }
+
+        // 用户选择 MIDI 设备
+        int selectedDevice = -1;
+        while (selectedDevice < 0 || selectedDevice >= MidiIn.NumberOfDevices)
+        {
+            Console.Write("请输入设备编号：");
+            if (int.TryParse(Console.ReadLine(), out selectedDevice) && selectedDevice >= 0 && selectedDevice < MidiIn.NumberOfDevices)
+            {
+                break;
+            }
+            else
+            {
+                Console.WriteLine("无效的设备编号，请重新选择。");
+            }
+        }
+
+        // 初始化选择的 MIDI 输入设备
+        var midiIn = new MidiIn(selectedDevice);
+        midiIn.MessageReceived += OnMidiMessageReceived;
+        midiIn.Start();
+
+        Console.WriteLine("正在监听 MIDI 输入... 按 Ctrl+C 退出。");
+
+        // 按下 Ctrl+C 时停止 MIDI 输入监听
+        Console.CancelKeyPress += (sender, e) =>
+        {
+            midiIn.Stop();
+            Console.WriteLine("MIDI 输入监听已停止。");
+        };
+
+        while (true) { } // 保持程序运行
+    }
+
+    private static void OnMidiMessageReceived(object sender, MidiInMessageEventArgs e)
+    {
+        if (e.MidiEvent is NoteEvent noteEvent)
+        {
+            var message = new { NoteNumber = noteEvent.NoteNumber, Velocity = noteEvent.Velocity, Command = noteEvent.CommandCode.ToString() };
+            string midiMessage = JsonSerializer.Serialize(message);
+            Console.WriteLine($"接收到 MIDI 消息: {midiMessage}");
+
+            ProcessMidiMessage(midiMessage);
+        }
+    }
+
+    private static void ProcessMidiMessage(string midiMessage)
+    {
+        try
+        {
+            var message = JsonSerializer.Deserialize<Dictionary<string, object>>(midiMessage);
+            if (message != null &&
+                message.TryGetValue("NoteNumber", out var noteNumberObj) &&
+                message.TryGetValue("Velocity", out var velocityObj) &&
+                message.TryGetValue("Command", out var commandObj))
+            {
+                // 处理 NoteNumber
+                int noteNumber = noteNumberObj is JsonElement noteNumberElement && noteNumberElement.ValueKind == JsonValueKind.Number
+                    ? noteNumberElement.GetInt32()
+                    : Convert.ToInt32(noteNumberObj);
+
+                // 处理 Velocity
+                int velocity = velocityObj is JsonElement velocityElement && velocityElement.ValueKind == JsonValueKind.Number
+                    ? velocityElement.GetInt32()
+                    : Convert.ToInt32(velocityObj);
+
+                // 处理 Command
+                string command = commandObj.ToString();
+
+                if (command == "NoteOn" && velocity > 0)
+                {
+                    HandleNoteOn(noteNumber);
+                }
+                else if (command == "NoteOff" || (command == "NoteOn" && velocity == 0))
+                {
+                    HandleNoteOff(noteNumber);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("解析 MIDI 消息时发生错误: " + ex.Message);
+        }
+    }
+
+    private static void HandleNoteOn(int note)
+    {
+        if (midiToGuzheng.TryGetValue(note, out var key))
+        {
+            Console.WriteLine($"Note {note} -> Key {key} (pressed)");
+            keyboardSimulator.Keyboard.KeyDown(key);
+        }
+    }
+
+    private static void HandleNoteOff(int note)
+    {
+        if (midiToGuzheng.TryGetValue(note, out var key))
+        {
+            Console.WriteLine($"Note {note} -> Key {key} (released)");
+            keyboardSimulator.Keyboard.KeyUp(key);
+        }
+    }
+
+    // MIDI 键值与虚拟键代码的映射
+    private static readonly Dictionary<int, VirtualKeyCode> midiToGuzheng = new Dictionary<int, VirtualKeyCode>
+    {
+        { 48, VirtualKeyCode.VK_A }, { 50, VirtualKeyCode.VK_S }, { 52, VirtualKeyCode.VK_D },
+        { 53, VirtualKeyCode.VK_F }, { 55, VirtualKeyCode.VK_G }, { 57, VirtualKeyCode.VK_H },
+        { 59, VirtualKeyCode.VK_J },
+        { 60, VirtualKeyCode.VK_Q }, { 62, VirtualKeyCode.VK_W }, { 64, VirtualKeyCode.VK_E },
+        { 65, VirtualKeyCode.VK_R }, { 67, VirtualKeyCode.VK_T }, { 69, VirtualKeyCode.VK_Y },
+        { 71, VirtualKeyCode.VK_U },
+        { 72, VirtualKeyCode.VK_1 }, { 74, VirtualKeyCode.VK_2 }, { 76, VirtualKeyCode.VK_3 },
+        { 77, VirtualKeyCode.VK_4 }, { 79, VirtualKeyCode.VK_5 }, { 81, VirtualKeyCode.VK_6 },
+        { 83, VirtualKeyCode.VK_7 },
+    };
+}

@@ -1,0 +1,256 @@
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using NAudio.Midi;
+using WindowsInput;
+using WindowsInput.Native;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        Console.WriteLine("请选择运行模式: [1] Host (主机) 或 [2] Client (客户端)");
+        string choice = Console.ReadLine();
+
+        if (choice == "1")
+        {
+            MidiHost.Start();
+        }
+        else if (choice == "2")
+        {
+            MidiClient.Start();
+        }
+        else
+        {
+            Console.WriteLine("无效的选择。");
+        }
+    }
+}
+
+class MidiHost
+{
+    private static TcpListener tcpListener;
+    private static List<TcpClient> clients = new List<TcpClient>();
+    private const int DefaultPort = 12345; // 默认端口号
+
+    public static void Start()
+    {
+        Console.WriteLine("请输入主机监听端口 (默认 12345): ");
+        string inputPort = Console.ReadLine();
+        int port = string.IsNullOrEmpty(inputPort) ? DefaultPort : int.Parse(inputPort);
+
+        tcpListener = new TcpListener(IPAddress.Any, port);
+        tcpListener.Start();
+        Console.WriteLine($"主机已启动，监听端口：{port}");
+
+        Thread clientAcceptThread = new Thread(AcceptClients);
+        clientAcceptThread.Start();
+
+        var midiIn = new MidiIn(0); // 假设第一个 MIDI 输入设备
+        midiIn.MessageReceived += OnMidiMessageReceived;
+        midiIn.Start();
+
+        Console.WriteLine("主机正在监听 MIDI 输入... 按 Ctrl+C 退出。");
+        Console.CancelKeyPress += (sender, e) =>
+        {
+            midiIn.Stop();
+            tcpListener.Stop();
+        };
+
+        while (true) { }
+    }
+
+    private static void AcceptClients()
+    {
+        while (true)
+        {
+            try
+            {
+                var client = tcpListener.AcceptTcpClient();
+                client.NoDelay = true; // 确保无延迟
+                lock (clients)
+                {
+                    clients.Add(client);
+                }
+                Console.WriteLine("客户端已连接: " + client.Client.RemoteEndPoint);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("接受客户端时发生错误: " + ex.Message);
+            }
+        }
+    }
+
+    private static void OnMidiMessageReceived(object sender, MidiInMessageEventArgs e)
+    {
+        if (e.MidiEvent is NoteEvent noteEvent)
+        {
+            var message = new { NoteNumber = noteEvent.NoteNumber, Velocity = noteEvent.Velocity, Command = noteEvent.CommandCode.ToString() };
+            string midiMessage = JsonSerializer.Serialize(message);
+            Console.WriteLine($"发送 MIDI 消息: {midiMessage}");
+
+            byte[] data = Encoding.UTF8.GetBytes(midiMessage + "\n"); // 添加换行符用于消息分割
+            lock (clients)
+            {
+                foreach (var client in clients)
+                {
+                    try
+                    {
+                        var stream = client.GetStream();
+                        stream.Write(data, 0, data.Length);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("发送消息到客户端时发生错误: " + ex.Message);
+                    }
+                }
+            }
+        }
+    }
+}
+
+class MidiClient
+{
+    private static InputSimulator keyboardSimulator = new InputSimulator();
+
+    public static void Start()
+    {
+        Console.WriteLine("请输入主机 IP 地址: ");
+        string hostIp = Console.ReadLine();
+
+        Console.WriteLine("请输入主机端口 (默认 12345): ");
+        string inputPort = Console.ReadLine();
+        int port = string.IsNullOrEmpty(inputPort) ? 12345 : int.Parse(inputPort);
+
+        TcpClient tcpClient = new TcpClient();
+        try
+        {
+            tcpClient.Connect(hostIp, port);
+            tcpClient.NoDelay = true; // 确保无延迟
+            Console.WriteLine($"客户端已连接到主机 {hostIp}:{port}");
+
+            NetworkStream stream = tcpClient.GetStream();
+            Thread listenThread = new Thread(() => ListenForMessages(stream));
+            listenThread.Start();
+
+            Console.CancelKeyPress += (sender, e) =>
+            {
+                tcpClient.Close();
+                Console.WriteLine("客户端已退出。");
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("连接主机时发生错误: " + ex.Message);
+        }
+    }
+
+    private static void ListenForMessages(NetworkStream stream)
+    {
+        byte[] buffer = new byte[1024];
+        StringBuilder messageBuilder = new StringBuilder();
+
+        while (true)
+        {
+            try
+            {
+                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                if (bytesRead > 0)
+                {
+                    string partialMessage = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    messageBuilder.Append(partialMessage);
+
+                    if (partialMessage.Contains("\n"))
+                    {
+                        string[] messages = messageBuilder.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        messageBuilder.Clear(); // 清空缓冲区
+                        foreach (var midiMessage in messages)
+                        {
+                            Console.WriteLine($"收到 JSON 消息: {midiMessage}");
+                            ProcessMidiMessage(midiMessage);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("接收消息时发生错误: " + ex.Message);
+                break;
+            }
+        }
+    }
+
+    private static void ProcessMidiMessage(string midiMessage)
+    {
+        try
+        {
+            var message = JsonSerializer.Deserialize<Dictionary<string, object>>(midiMessage);
+            if (message != null &&
+                message.TryGetValue("NoteNumber", out var noteNumberObj) &&
+                message.TryGetValue("Velocity", out var velocityObj) &&
+                message.TryGetValue("Command", out var commandObj))
+            {
+                // 处理 NoteNumber
+                int noteNumber = noteNumberObj is JsonElement noteNumberElement && noteNumberElement.ValueKind == JsonValueKind.Number
+                    ? noteNumberElement.GetInt32()
+                    : Convert.ToInt32(noteNumberObj);
+
+                // 处理 Velocity
+                int velocity = velocityObj is JsonElement velocityElement && velocityElement.ValueKind == JsonValueKind.Number
+                    ? velocityElement.GetInt32()
+                    : Convert.ToInt32(velocityObj);
+
+                // 处理 Command
+                string command = commandObj.ToString();
+
+                if (command == "NoteOn" && velocity > 0)
+                {
+                    HandleNoteOn(noteNumber);
+                }
+                else if (command == "NoteOff" || (command == "NoteOn" && velocity == 0))
+                {
+                    HandleNoteOff(noteNumber);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("解析 JSON 消息时发生错误: " + ex.Message);
+        }
+    }
+
+    private static void HandleNoteOn(int note)
+    {
+        if (midiToGuzheng.TryGetValue(note, out var key))
+        {
+            Console.WriteLine($"Note {note} -> Key {key} (pressed)");
+            keyboardSimulator.Keyboard.KeyDown(key);
+        }
+    }
+
+    private static void HandleNoteOff(int note)
+    {
+        if (midiToGuzheng.TryGetValue(note, out var key))
+        {
+            Console.WriteLine($"Note {note} -> Key {key} (released)");
+            keyboardSimulator.Keyboard.KeyUp(key);
+        }
+    }
+
+    private static readonly Dictionary<int, VirtualKeyCode> midiToGuzheng = new Dictionary<int, VirtualKeyCode>
+    {
+        { 48, VirtualKeyCode.VK_A }, { 50, VirtualKeyCode.VK_S }, { 52, VirtualKeyCode.VK_D },
+        { 53, VirtualKeyCode.VK_F }, { 55, VirtualKeyCode.VK_G }, { 57, VirtualKeyCode.VK_H },
+        { 59, VirtualKeyCode.VK_J },
+        { 60, VirtualKeyCode.VK_Q }, { 62, VirtualKeyCode.VK_W }, { 64, VirtualKeyCode.VK_E },
+        { 65, VirtualKeyCode.VK_R }, { 67, VirtualKeyCode.VK_T }, { 69, VirtualKeyCode.VK_Y },
+        { 71, VirtualKeyCode.VK_U },
+        { 72, VirtualKeyCode.VK_1 }, { 74, VirtualKeyCode.VK_2 }, { 76, VirtualKeyCode.VK_3 },
+        { 77, VirtualKeyCode.VK_4 }, { 79, VirtualKeyCode.VK_5 }, { 81, VirtualKeyCode.VK_6 },
+        { 83, VirtualKeyCode.VK_7 },
+    };
+}
