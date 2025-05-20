@@ -132,35 +132,6 @@ class Program
         }
     }
 
-    private static string FromCode(string s)
-    {
-        string key = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        int cd = key.Length;
-        List<int> resultChars = new List<int>();
-        int d = 0;
-
-        // 遍历加密字符串的每 3 个字符
-        for (int i = 0; i < s.Length / 3; i++)
-        {
-            int b1 = key.IndexOf(s[d]);
-            d++;
-            int b2 = key.IndexOf(s[d]);
-            d++;
-            int b3 = key.IndexOf(s[d]);
-            d++;
-
-            int charCode = b1 * cd * cd + b2 * cd + b3;
-            resultChars.Add(charCode);
-        }
-
-        var data = new string(resultChars.ConvertAll(code => (char)code).ToArray());
-
-        // 修正为标准 JSON 格式
-        data = data.Replace("'", "\"") // 替换单引号为双引号
-                   .Replace("True", "true") // 修正布尔值
-                   .Replace("False", "false");
-        return data;
-    }
 }
 
 
