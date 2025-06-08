@@ -154,9 +154,12 @@ class MidiHandler
         {
             midiIn.Stop();
             Console.WriteLine("MIDI 输入监听已停止。");
+            e.Cancel = true;
         };
 
-        while (true) { }
+        Console.WriteLine("按任意键退出...");
+        Console.ReadKey();
+        midiIn.Stop();
     }
 
     private static void OnMidiMessageReceived(object sender, MidiInMessageEventArgs e)
